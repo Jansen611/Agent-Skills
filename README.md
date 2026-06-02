@@ -25,6 +25,7 @@ Each skill lives in `skills/<name>/` — some include reusable scripts under `sc
 | [**siri-shortcut-editing**](skills/siri-shortcut-editing/SKILL.md) | Edit macOS Siri Shortcuts programmatically — decode, modify, re-sign. | Edit .shortcut files, programmatically modify shortcuts, resign shortcuts |
 | [**youtube-transcript**](skills/youtube-transcript/SKILL.md) | Download YouTube video transcripts via yt-dlp. | Get captions/subtitles, transcribe YouTube videos, extract video text |
 | [**grill-me**](skills/grill-me/SKILL.md) | Grilling session to stress-test a plan or design with relentless questions until every branch is resolved. _Derived from [@mattpocock](https://github.com/mattpocock/skills)._ | Get grilled on a design, clarify a plan, resolve decision trees |
+| [**handoff-conversation**](skills/handoff-conversation/SKILL.md) | Compact the current conversation into a handoff document for another agent to pick up. _Derived from [@mattpocock](https://github.com/mattpocock/skills)._ | Hand off work to another agent, summarize conversation for continuation |
 
 ## Why These Skills Exist
 
