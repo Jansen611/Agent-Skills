@@ -2,9 +2,8 @@
 name: handoff-conversation
 description: Compact the current conversation into a handoff document for another agent to pick up.
 argument-hint: "What will the next session be used for?"
+attribution: Derived from the original "handoff" skill by Matt Pocock, included under the MIT License. Copyright (c) 2026 Matt Pocock.
 ---
-
-> Attribution: Derived from the original "handoff" skill by Matt Pocock, included under the MIT License. Copyright (c) 2026 Matt Pocock.
 
 Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save to the temporary directory of the user's OS - not the current workspace.
 
