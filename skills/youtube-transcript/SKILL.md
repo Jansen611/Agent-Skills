@@ -1,6 +1,13 @@
 ---
-name: youtube-transcript
-description: Download YouTube video transcripts when user provides a YouTube URL or asks to download/get/fetch a transcript from YouTube. Also use when user wants to transcribe or get captions/subtitles from a YouTube video.
+name: youtube-dlp-python
+description: |
+  Download YouTube video transcripts (subtitles/captions) using yt-dlp, with faster-whisper as fallback for local transcription.
+  Supports manual subtitles, auto-generated captions, and Whisper transcription when the subtitle API is blocked.
+
+  Triggers when user mentions:
+  - Provides a YouTube URL and wants the transcript
+  - "download transcript" or "get captions/subtitles" from a YouTube video
+  - "transcribe a YouTube video" or needs text content from a video
 author: Jansen Lin
 license: MIT
 allowed-tools: Bash,Read,Write
@@ -8,37 +15,22 @@ allowed-tools: Bash,Read,Write
 
 # YouTube Transcript Downloader
 
-This skill helps download transcripts (subtitles/captions) from YouTube videos using yt-dlp.
+Download transcripts (subtitles/captions) from YouTube videos. Uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) as the primary tool for subtitle retrieval, with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) as fallback for local transcription when the subtitle API is blocked or no subtitles exist.
 
-## When to Use This Skill
+## Design Philosophy
 
-Activate this skill when the user:
-- Provides a YouTube URL and wants the transcript
-- Asks to "download transcript from YouTube"
-- Wants to "get captions" or "get subtitles" from a video
-- Asks to "transcribe a YouTube video"
-- Needs text content from a YouTube video
+Always try yt-dlp subtitles first — they are instant and free. Only fall back to faster-whisper when:
 
-## How It Works
+- Subtitle API returns HTTP 429/403 (common on cloud/VPS/datacenter IPs)
+- No subtitles exist for the video (e.g. very old content)
 
-### Priority Order:
-1. **Check if yt-dlp is available** - try `which yt-dlp`
-2. **If not found, reload shell environment** - `source ~/.zshrc && which yt-dlp` (macOS terminal may not auto-load rc files)
-3. **If still not found, check ~/.venv** - try `test -f ~/.venv/bin/yt-dlp`
-4. **If found in ~/.venv, add to PATH** - `export PATH="$HOME/.venv/bin:$PATH"`
-5. **Only install yt-dlp as last resort** - after Steps 1-4 all failed
-6. **List available subtitles** - see what's actually available
-7. **Try manual subtitles first** (`--write-sub`) - highest quality
-8. **Fallback to auto-generated** (`--write-auto-sub`) - usually available
-9. **Last resort: Whisper transcription** - if no subtitles exist (requires user confirmation)
-10. **Confirm the download** and show the user where the file is saved
-11. **Optionally clean up** the VTT format if the user wants plain text
+yt-dlp handles subtitles via YouTube's timedtext API. faster-whisper downloads the audio track and transcribes locally on CPU — slower but reliable.
 
-## Environment Setup
+## Pre-Check
 
-### Check yt-dlp Installation
+### yt-dlp
 
-**IMPORTANT: Follow these steps IN ORDER. Do NOT install yt-dlp until all PATH resolution steps have been tried.**
+**IMPORTANT: Follow these steps IN ORDER. Do NOT install until all PATH resolution steps have been tried.**
 
 #### Step 1: Check if yt-dlp is in PATH
 
@@ -46,7 +38,7 @@ Activate this skill when the user:
 which yt-dlp || command -v yt-dlp
 ```
 
-If found → skip to [Usage](#usage).
+If found → skip to [faster-whisper](#faster-whisper).
 
 #### Step 2: Reload shell environment and re-check (macOS)
 
@@ -56,7 +48,7 @@ On macOS, VS Code's terminal may not auto-load `~/.zshrc`, so environment variab
 source ~/.zshrc && which yt-dlp
 ```
 
-If found → skip to [Usage](#usage).
+If found → skip to [faster-whisper](#faster-whisper).
 
 #### Step 3: Check if yt-dlp exists in ~/.venv
 
@@ -64,7 +56,7 @@ If found → skip to [Usage](#usage).
 test -f ~/.venv/bin/yt-dlp && echo "found"
 ```
 
-If found → add to PATH for this session, then proceed to [Usage](#usage):
+If found → add to PATH for this session:
 
 ```bash
 export PATH="$HOME/.venv/bin:$PATH"
@@ -72,16 +64,45 @@ export PATH="$HOME/.venv/bin:$PATH"
 
 #### Step 4: Only install if Steps 1-3 all failed
 
-Install yt-dlp into the shared virtual environment:
-
 ```bash
 ~/.venv/bin/pip install yt-dlp
+export PATH="$HOME/.venv/bin:$PATH"
 ```
 
-Then add to PATH:
+### faster-whisper
+
+faster-whisper is needed for the [Audio + Whisper fallback](#fallback-subtitle-api-blocked-http-429) path. Verify it before attempting the fallback.
+
+#### Step 1: Check if faster-whisper is importable
 
 ```bash
-export PATH="$HOME/.venv/bin:$PATH"
+python3 -c "from faster_whisper import WhisperModel; print('ready')"
+```
+
+If ready → skip to [Usage](#usage).
+
+#### Step 2: Check in ~/.venv
+
+```bash
+~/.venv/bin/python3 -c "from faster_whisper import WhisperModel; print('ready')"
+```
+
+If ready in ~/.venv → activate the venv:
+
+```bash
+source ~/.venv/bin/activate
+```
+
+#### Step 3: Only install if Steps 1-2 both failed
+
+```bash
+~/.venv/bin/pip install faster-whisper
+```
+
+This also installs PyAV (`av`) automatically as a dependency. Verify after:
+
+```bash
+~/.venv/bin/python3 -c "from faster_whisper import WhisperModel; import av; print('ready')"
 ```
 
 ## Usage
@@ -185,10 +206,79 @@ python3 scripts/vtt_to_transcript.py "$VTT_FILE" >> "$OUTPUT_MD"
 echo "Transcription complete: $OUTPUT_MD"
 ```
 
+## Fallback: Subtitle API Blocked (HTTP 429)
+
+When yt-dlp subtitle download fails with `HTTP Error 429: Too Many Requests`, the YouTube timedtext subtitle API is blocked for this IP. This is common on cloud/VPS/datacenter environments where YouTube pre-blocks non-residential IP ranges. **The video download itself is NOT affected** — audio downloads go through a different CDN endpoint.
+
+**There is no fix for this yt-dlp-side.** The only reliable fallback is:
+
+1. Download the audio track with yt-dlp
+2. Transcribe locally with faster-whisper + PyAV
+
+### Prerequisites for Whisper Fallback
+
+faster-whisper must be available. Follow the [faster-whisper Pre-Check](#faster-whisper) steps before proceeding. Quick verification:
+
+```bash
+python3 -c "from faster_whisper import WhisperModel; import av; print('ready')"
+```
+
+### Audio Download + Whisper Transcription Workflow
+
+Use a single Python script for the entire pipeline — download audio, transcribe, output formatted markdown:
+
+```bash
+cd "$OUTPUT_DIR"
+
+python3 << 'PYEOF'
+import subprocess, re, time, os
+
+VIDEO_URL = "YOUTUBE_URL"
+
+# --- Step 1: Get title and download audio ---
+title = subprocess.check_output(["yt-dlp", "--get-title", VIDEO_URL], text=True).strip()
+safe_title = re.sub(r'[/:*?"<>|]', '-', title)
+audio_file = f"{safe_title}.webm"
+
+print(f"Downloading audio: {title}")
+subprocess.run(["yt-dlp", "-f", "bestaudio", "--output", audio_file, VIDEO_URL], check=True)
+
+# --- Step 2: Transcribe with faster-whisper ---
+from faster_whisper import WhisperModel
+import av  # noqa: F401 — used by faster-whisper internally
+
+print("Transcribing...")
+model = WhisperModel("small", device="cpu", compute_type="int8")
+segments, info = model.transcribe(audio_file, language="en", beam_size=5, vad_filter=True)
+print(f"Detected: {info.language} (p={info.language_probability:.2f})")
+
+# --- Step 3: Write output ---
+snake_title = re.sub(r'[^a-zA-Z0-9 ]', '', title)
+snake_title = re.sub(r'\s+', '_', snake_title.strip())
+output_file = f"Youtube-Transcript-{snake_title}.md"
+
+with open(output_file, 'w') as f:
+    f.write(f"Source: [{title}]({VIDEO_URL})\n\n")
+    for seg in segments:
+        h, m, s = int(seg.start // 3600), int((seg.start % 3600) // 60), seg.start % 60
+        timestamp = f"[{h:02d}:{m:02d}:{s:06.3f}]"
+        f.write(f"{timestamp} {seg.text.strip()}\n")
+
+# --- Step 4: Clean up audio ---
+os.remove(audio_file)
+print(f"Done → {output_file}")
+PYEOF
+```
+
+**Model selection guidance:**
+- `small` (~460MB): Best for clear English speech, ~5s per minute of audio on CPU. Default choice for YouTube talk/presentation content.
+- `medium` (~1.5GB): Better for accented speech or mild background noise. ~2-3x slower.
+- `large-v3` (~3GB): Best for noisy environments, non-English, or multi-speaker. ~4-5x slower. Not worth it for clean single-speaker English.
+
 ## Output Formats
 
-- **VTT format** (`.vtt`): Raw subtitle file with word-level timing markup
-- **Timestamped transcript** (`.md`): Named `Youtube-Transcript-<Snake_Case_Title>.md`. Clean text with line-level timestamps, e.g. `[00:01:23.456] text here`
+- **VTT format** (`.vtt`): Raw subtitle file with word-level timing markup (yt-dlp subtitle download only)
+- **Timestamped transcript** (`.md`): Named `Youtube-Transcript-<Snake_Case_Title>.md`. Clean text with line-level timestamps, e.g. `[00:01:23.456] text here`. Produced by both yt-dlp and Whisper paths.
 
 ## Common Issues
 
@@ -196,4 +286,8 @@ echo "Transcription complete: $OUTPUT_MD"
 |-------|----------|
 | `command not found: yt-dlp` | Run `source ~/.zshrc` first, then check common Python bin paths |
 | `No subtitles for requested languages` | Try `--write-auto-sub` instead of `--write-sub` |
+| `HTTP Error 429: Too Many Requests` | Subtitle API blocked on this IP (common on cloud/VPS). Do NOT retry — use [Audio + Whisper fallback](#fallback-subtitle-api-blocked-http-429) immediately. |
+| `HTTP Error 403: Forbidden` on subtitle | Same as 429 — IP/subnet is pre-blocked. Use Whisper fallback. |
+| `ModuleNotFoundError: No module named 'faster_whisper'` | Run through the [faster-whisper Pre-Check](#faster-whisper) steps |
+| `ModuleNotFoundError: No module named 'av'` | PyAV missing — run `~/.venv/bin/pip install faster-whisper` (installs `av` as dependency) |
 | Python 3.9 deprecated | Upgrade to Python 3.10+ |
