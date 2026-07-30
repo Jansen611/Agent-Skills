@@ -65,7 +65,7 @@ export PATH="$HOME/.venv/bin:$PATH"
 #### Step 4: Only install if Steps 1-3 all failed
 
 ```bash
-~/.venv/bin/pip install yt-dlp
+~/.venv/bin/pip install -U "yt-dlp[default]"
 export PATH="$HOME/.venv/bin:$PATH"
 ```
 
@@ -128,11 +128,11 @@ TITLE=$(yt-dlp --get-title "YOUTUBE_URL" | sed 's/[/:*?"<>|]/-/g')
 Convert the title to snake_case, removing special characters (`.` `,` `'` etc.), and prefix with `Youtube-Transcript-`:
 
 ```bash
-SNAKE_TITLE=$(echo "$TITLE" | sed "s/[^a-zA-Z0-9 ]//g" | sed 's/  */ /g' | sed 's/ /_/g')
+SNAKE_TITLE=$(echo "$TITLE" | sed 's/[^[:alnum:]]/_/g' | sed 's/__*/_/g' | sed 's/^_//;s/_$//')
 OUTPUT_MD="Youtube-Transcript-$SNAKE_TITLE.md"
 ```
 
-Example: `From Writing Code to Managing Agents. Most Engineers Aren't Ready - Stanford University, Mihail Eric` becomes `Youtube-Transcript-From_Writing_Code_to_Managing_Agents_Most_Engineers_Arent_Ready__Stanford_University_Mihail_Eric.md`
+Example: `From Writing Code to Managing Agents. Most Engineers Aren't Ready - Stanford University, Mihail Eric` becomes `Youtube-Transcript-From_Writing_Code_to_Managing_Agents_Most_Engineers_Arent_Ready_Stanford_University_Mihail_Eric.md`
 
 ### Download Manual Subtitles (Preferred)
 
@@ -154,6 +154,8 @@ Both commands create a `.vtt` file named `<videoTitle>.en.vtt`.
 
 ## Post-Processing
 
+> **`$SKILL_DIR`**: the directory containing this SKILL.md file.
+
 ### Convert VTT to Timestamped Transcript
 
 VTT auto-generated subtitles contain duplicate lines. Extract clean text with timestamps.
@@ -165,7 +167,7 @@ Use the VTT filename from the download step (e.g. `<videoTitle>.en.vtt`).
 ```bash
 echo "Source: [$TITLE](YOUTUBE_URL)" > "$OUTPUT_MD"
 echo >> "$OUTPUT_MD"
-python3 scripts/vtt_to_transcript.py "$TITLE.en.vtt" >> "$OUTPUT_MD"
+python3 "$SKILL_DIR/scripts/vtt_to_transcript.py" "$TITLE.en.vtt" >> "$OUTPUT_MD"
 ```
 ```
 Source: [The AI Native Engineer](https://www.youtube.com/watch?v=xxxxx)
@@ -201,7 +203,7 @@ echo "Source: [$TITLE]($VIDEO_URL)" > "$OUTPUT_MD"
 echo >> "$OUTPUT_MD"
 
 # Convert to timestamped transcript
-python3 scripts/vtt_to_transcript.py "$VTT_FILE" >> "$OUTPUT_MD"
+python3 "$SKILL_DIR/scripts/vtt_to_transcript.py" "$VTT_FILE" >> "$OUTPUT_MD"
 
 echo "Transcription complete: $OUTPUT_MD"
 ```

@@ -29,7 +29,7 @@ def vtt_to_transcript(vtt_path: str) -> None:
         if m:
             start, end = m.group(1), m.group(2)
             # Skip very short segments (likely artifacts)
-            if to_ms(end) - to_ms(start) <= 20:
+            if to_ms(end) - to_ms(start) >= 20:
                 if i + 1 < len(lines):
                     text = lines[i + 1].strip()
                     text = re.sub("<[^>]*>", "", text)
