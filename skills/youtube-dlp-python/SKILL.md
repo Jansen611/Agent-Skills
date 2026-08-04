@@ -115,24 +115,29 @@ This also installs PyAV (`av`) automatically as a dependency. Verify after:
 yt-dlp --list-subs "YOUTUBE_URL"
 ```
 
-### Get Video Title
+### Get Video Title and Channel
 
-Use the video title as the output filename:
+Use the video title and channel name to build the output filename:
 
 ```bash
 TITLE=$(yt-dlp --get-title "YOUTUBE_URL" | sed 's/[/:*?"<>|]/-/g')
+CHANNEL=$(yt-dlp --print channel "YOUTUBE_URL" | sed 's/^NA$//')
 ```
 
 ### Derive Snake Case Filename
 
-Convert the title to snake_case, removing special characters (`.` `,` `'` etc.), and prefix with `Youtube-Transcript-`:
+Convert the channel and title to snake_case (removing special characters like `.` `,` `'`, preserving unicode), then combine as `Youtube-<channel>-<title>`:
 
 ```bash
-SNAKE_TITLE=$(echo "$TITLE" | sed 's/[^[:alnum:]]/_/g' | sed 's/__*/_/g' | sed 's/^_//;s/_$//')
-OUTPUT_MD="Youtube-Transcript-$SNAKE_TITLE.md"
+snake_case() {
+  echo "$1" | sed 's/[^[:alnum:]]/_/g' | sed 's/__*/_/g' | sed 's/^_//;s/_$//'
+}
+CHANNEL_SNAKE=$(snake_case "$CHANNEL")
+SNAKE_TITLE=$(snake_case "$TITLE")
+OUTPUT_MD="Youtube-${CHANNEL_SNAKE:+$CHANNEL_SNAKE-}$SNAKE_TITLE.md"
 ```
 
-Example: `From Writing Code to Managing Agents. Most Engineers Aren't Ready - Stanford University, Mihail Eric` becomes `Youtube-Transcript-From_Writing_Code_to_Managing_Agents_Most_Engineers_Arent_Ready_Stanford_University_Mihail_Eric.md`
+Example: channel `EO`, title `From Writing Code to Managing Agents. Most Engineers Aren't Ready - Stanford University, Mihail Eric` becomes `Youtube-EO-From_Writing_Code_to_Managing_Agents_Most_Engineers_Arent_Ready_Stanford_University_Mihail_Eric.md`
 
 ### Download Manual Subtitles (Preferred)
 
@@ -185,12 +190,17 @@ OUTPUT_DIR="/Users/jansen/OpenWork"
 
 cd "$OUTPUT_DIR"
 
-# Get video title and sanitize for filename
+# Get video title and channel, sanitize for filename
 TITLE=$(yt-dlp --get-title "$VIDEO_URL" | sed 's/[/:*?"<>|]/-/g')
+CHANNEL=$(yt-dlp --print channel "$VIDEO_URL" | sed 's/^NA$//')
 
-# Derive snake_case output filename with Youtube-Transcript- prefix
-SNAKE_TITLE=$(echo "$TITLE" | sed "s/[^a-zA-Z0-9 ]//g" | sed 's/  */ /g' | sed 's/ /_/g')
-OUTPUT_MD="Youtube-Transcript-$SNAKE_TITLE.md"
+# Derive snake_case output filename as Youtube-<channel>-<title>
+snake_case() {
+  echo "$1" | sed 's/[^[:alnum:]]/_/g' | sed 's/__*/_/g' | sed 's/^_//;s/_$//'
+}
+CHANNEL_SNAKE=$(snake_case "$CHANNEL")
+SNAKE_TITLE=$(snake_case "$TITLE")
+OUTPUT_MD="Youtube-${CHANNEL_SNAKE:+$CHANNEL_SNAKE-}$SNAKE_TITLE.md"
 
 # Download auto-generated English subtitles
 yt-dlp --write-auto-sub --sub-langs en --skip-download --output "$TITLE" "$VIDEO_URL"
@@ -237,8 +247,11 @@ import subprocess, re, time, os
 
 VIDEO_URL = "YOUTUBE_URL"
 
-# --- Step 1: Get title and download audio ---
+# --- Step 1: Get title/channel and download audio ---
 title = subprocess.check_output(["yt-dlp", "--get-title", VIDEO_URL], text=True).strip()
+channel = subprocess.check_output(["yt-dlp", "--print", "channel", VIDEO_URL], text=True).strip()
+if channel == "NA":
+    channel = ""
 safe_title = re.sub(r'[/:*?"<>|]', '-', title)
 audio_file = f"{safe_title}.webm"
 
@@ -255,9 +268,11 @@ segments, info = model.transcribe(audio_file, language="en", beam_size=5, vad_fi
 print(f"Detected: {info.language} (p={info.language_probability:.2f})")
 
 # --- Step 3: Write output ---
-snake_title = re.sub(r'[^a-zA-Z0-9 ]', '', title)
-snake_title = re.sub(r'\s+', '_', snake_title.strip())
-output_file = f"Youtube-Transcript-{snake_title}.md"
+snake_case = lambda s: '_'.join(re.findall(r'\w+', s))
+snake_title = snake_case(title)
+snake_channel = snake_case(channel)
+prefix = f"Youtube-{snake_channel}-" if snake_channel else "Youtube-"
+output_file = f"{prefix}{snake_title}.md"
 
 with open(output_file, 'w') as f:
     f.write(f"Source: [{title}]({VIDEO_URL})\n\n")
@@ -280,7 +295,7 @@ PYEOF
 ## Output Formats
 
 - **VTT format** (`.vtt`): Raw subtitle file with word-level timing markup (yt-dlp subtitle download only)
-- **Timestamped transcript** (`.md`): Named `Youtube-Transcript-<Snake_Case_Title>.md`. Clean text with line-level timestamps, e.g. `[00:01:23.456] text here`. Produced by both yt-dlp and Whisper paths.
+- **Timestamped transcript** (`.md`): Named `Youtube-<Channel>-<Snake_Case_Title>.md`, e.g. `Youtube-Tina_Huang-MCP_In_26_Minutes_Model_Context_Protocol.md`. Clean text with line-level timestamps, e.g. `[00:01:23.456] text here`. Produced by both yt-dlp and Whisper paths.
 
 ## Common Issues
 
