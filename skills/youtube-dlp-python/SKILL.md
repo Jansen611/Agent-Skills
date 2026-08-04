@@ -3,11 +3,11 @@ name: youtube-dlp-python
 description: |
   Download YouTube video transcripts (subtitles/captions) using yt-dlp, with faster-whisper as fallback for local transcription.
   Supports manual subtitles, auto-generated captions, and Whisper transcription when the subtitle API is blocked.
+  Optionally fetches YouTube comments (top/most-recent sorted) via yt-dlp.
 
   Triggers when user mentions:
   - Provides a YouTube URL and wants the transcript
   - "download transcript" or "get captions/subtitles" from a YouTube video
-  - "transcribe a YouTube video" or needs text content from a video
 author: Jansen Lin
 license: MIT
 allowed-tools: Bash,Read,Write
@@ -218,6 +218,42 @@ python3 "$SKILL_DIR/scripts/vtt_to_transcript.py" "$VTT_FILE" >> "$OUTPUT_MD"
 echo "Transcription complete: $OUTPUT_MD"
 ```
 
+## Optional Feature: Fetch Comments (Read-Only)
+
+yt-dlp can fetch the comment section directly from YouTube's comment API — no scraping needed. Useful for reading top/highly-liked comments, gauging audience reaction, or analyzing the comment section. **This feature does not download any video/subtitle files.**
+
+### Quick Start (single command, no files written)
+
+Pipe `--dump-single-json` straight to Python for parsing — avoids any file-write permission issues and leaves no artifacts:
+
+```bash
+yt-dlp --skip-download --write-comments --dump-single-json --no-warnings \
+  --extractor-args "youtube:comment_sort=top;max_comments=80" "YOUTUBE_URL" 2>/dev/null \
+  | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+comments=d.get('comments') or []
+print(f'comments: {len(comments)}')
+for i,c in enumerate(comments):
+    print(f'### {i+1} | likes={c.get(\"like_count\",0)} | {c.get(\"author\",\"\")}')
+    print(c.get('text',''))
+    print()
+"
+```
+
+**CRITICAL GOTCHAS** (each was hit in the field — do not skip):
+
+1. **You MUST pass `--write-comments`.** Without it, the `comments` field comes back empty (`[]`) even when `max_comments` is set. This is the #1 mistake.
+2. **`comment_sort` accepts `top` (default) or `newest`.** `top` returns the highest-liked comments — what users usually want.
+3. **`max_comments`** caps the number pulled. Values of 40–100 work well. Note: total available is often larger (e.g. 141 comments in the section) but extraction may stop earlier depending on API.
+4. **`--dump-single-json` writes to stdout** — prefer it over `--write-info-json` (which writes a file and may fail on permission-restricted dirs like root-owned `/tmp`). If you DO want a file, run in a user-writable dir.
+5. **Expected warnings**: "No supported JavaScript runtime could be found" and "ffmpeg not found" are harmless for comment fetching — both are only needed for format/format-download paths. Ignore them.
+
+### Verifying After Fetch
+
+- If `comments: 0` → see gotcha #1 above. Do NOT retry with different flags blindly.
+- If extraction hangs or times out on a very large comment section, lower `max_comments` (e.g. 20) or retry once.
+
 ## Fallback: Subtitle API Blocked (HTTP 429)
 
 When yt-dlp subtitle download fails with `HTTP Error 429: Too Many Requests`, the YouTube timedtext subtitle API is blocked for this IP. This is common on cloud/VPS/datacenter environments where YouTube pre-blocks non-residential IP ranges. **The video download itself is NOT affected** — audio downloads go through a different CDN endpoint.
@@ -308,3 +344,4 @@ PYEOF
 | `ModuleNotFoundError: No module named 'faster_whisper'` | Run through the [faster-whisper Pre-Check](#faster-whisper) steps |
 | `ModuleNotFoundError: No module named 'av'` | PyAV missing — run `~/.venv/bin/pip install faster-whisper` (installs `av` as dependency) |
 | Python 3.9 deprecated | Upgrade to Python 3.10+ |
+| `Cannot write video metadata to JSON file` | Running in a permission-restricted dir (e.g. root-owned `/tmp`). Use `--dump-single-json` piped to stdout instead of `--write-info-json` |
