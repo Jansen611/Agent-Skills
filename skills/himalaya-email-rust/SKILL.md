@@ -1,433 +1,315 @@
 ---
 name: himalaya-email-rust
 description: |
-  CLI email client for terminal. Manage emails via shell commands in a stateless way.
-  Supports IMAP, SMTP, Maildir, Notmuch, Sendmail, PGP encryption, OAuth 2.0.
-  Outputs JSON for easy parsing by scripts and AI agents.
+  Manage email from the terminal using Himalaya v2. Supports IMAP, SMTP, JMAP, Gmail REST API, Microsoft Graph, Maildir, m2dir, JSON automation, and email attachments.
 
   Triggers when user mentions:
-  - "check email", "read my emails", "list emails", or "himalaya"
-  - "send", "reply to", "forward", "delete", or "move" emails
-  - "search emails" or "filter emails"
-  - wants to manage email accounts from terminal
-  - "download attachments" from email, or "save email attachments"
+  - "check", "read" or "list" emails
+  - "send", "reply", "forward", "delete", "move", or "copy" emails
+  - downloading or sending email attachments
 author: Jansen Lin
 license: MIT
-allowed-tools: Bash
+allowed-tools: Bash,Read,Write
 ---
 
-# Himalaya Email CLI Skill
+# Himalaya Email Manager
 
-Manage emails from the terminal using [pimalaya/himalaya](https://github.com/pimalaya/himalaya), a stateless CLI email client written in Rust.
+Manage email with Himalaya v2.0.0+. Primary: built-in v2 commands. For simple email attachments, use `message compose --attach`. For rich MIME, signing, encryption, or custom formatting, generate a valid `.eml` file and pass it to `message send`.
 
-## Design Philosophy
+All commands are stateless. Check the installed binary's `--help` when a command or flag is version-sensitive.
 
-Himalaya is a **CLI** (not a TUI). There is no event loop — each command runs and exits immediately, making it ideal for AI agent use:
+## Decision
 
-```bash
-himalaya envelope list --page 1 --output json
-# → exits, returns JSON
-```
+1. Check the binary and account first: `himalaya --version` and `himalaya account check --json`.
+2. For a normal text email or ordinary attachment, use **Path A (`message compose`)**.
+3. For multipart MIME or custom headers, use **Path B (`message send` with `.eml`)**.
+4. For Gmail SMTP, do not pass `--save sent` unless a duplicate Sent copy is explicitly requested. Gmail normally saves sent messages automatically.
+5. For machine processing, use `--json` and keep the mailbox together with every message id.
 
-Always prefer `--output json` when parsing results programmatically.
-
-## Pre-Check
-
-### Step 1: Check if himalaya is available
+## Environment Check
 
 ```bash
-which himalaya || command -v himalaya
-```
-
-If found → skip to [Usage](#usage).
-
-### Step 2: Check in ~/.cargo/bin (installed via cargo)
-
-```bash
-test -f ~/.cargo/bin/himalaya && echo "found"
-```
-
-If found → add to PATH:
-
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-### Step 3: Install via Cargo (only if Steps 1-2 both failed)
-
-```bash
-cargo install himalaya --locked --features oauth2,keyring
-```
-
-OAuth 2.0 and keyring are optional features needed for modern email providers (Google, Microsoft). If already installed without them, reinstall with the features flag.
-
-> **Microsoft Azure AD OAuth 2.0 registration**: the redirect URI platform type **must be "Web"** — "Mobile and desktop" (public client) causes `401 Unauthorized` during token exchange because Himalaya sends the client secret via Basic Auth.
-
-After installation, verify:
-
-```bash
+command -v himalaya
 himalaya --version
+himalaya account list --json
+himalaya account check --json
 ```
 
-## Global Options
+If Himalaya is not in PATH, check the common Cargo location:
 
-All commands support these flags:
+```bash
+test -x "$HOME/.cargo/bin/himalaya" && "$HOME/.cargo/bin/himalaya" --version
+```
 
-| Flag | Description |
-|------|-------------|
-| `-o, --output json` | JSON output for machine parsing |
-| `-c, --config <PATH>` | Override config file path |
-| `-a, --account <NAME>` | Override the default account |
-| `--quiet` | Disable all logs |
-| `--debug` | Enable debug logs |
+Install a stable release using the official release assets or installer. OAuth and secret storage are provided through external tools such as password managers and token brokers.
+
+Official references:
+
+- [Himalaya README](https://github.com/pimalaya/himalaya/blob/v2.0.0/README.md)
+- [Himalaya releases](https://github.com/pimalaya/himalaya/releases)
+
+## Safety
+
+- Never print, log, or include passwords, app passwords, OAuth tokens, or `.env` contents.
+- Verify the recipient, subject, body, and attachment paths before sending.
+- Do not use `--save sent` for Gmail SMTP unless a manual Sent copy is required.
+- Use `--log-level off` when clean JSON output is required.
 
 ## Configuration
 
-Config file locations:
-- **macOS**: `~/Library/Application Support/himalaya/config.toml`
-- **Linux**: `~/.config/himalaya/config.toml`
+Config files are loaded from the first valid path among:
+- `$XDG_CONFIG_HOME/himalaya/config.toml`
+- `$HOME/.config/himalaya/config.toml`
+- `$HOME/.himalayarc`
 
-Run the interactive wizard:
-
-```bash
-himalaya
-```
-
-Or configure a specific account:
+Inspect accounts and connectivity:
 
 ```bash
-himalaya account configure <name>
+himalaya account list --json
+himalaya account check --account "Account Name" --json
 ```
 
-List all configured accounts:
+Run bare `himalaya` for the account discovery wizard.
+
+### IMAP and SMTP
+
+```toml
+[accounts.gmail]
+default = true
+
+imap.server = "imaps://imap.gmail.com:993"
+imap.sasl.plain.username = "user@example.com"
+imap.sasl.plain.password.command = ["pass", "show", "gmail"]
+
+smtp.server = "smtps://smtp.gmail.com:465"
+smtp.sasl.plain.username = "user@example.com"
+smtp.sasl.plain.password.command = ["pass", "show", "gmail"]
+
+mailbox.alias.inbox = "INBOX"
+mailbox.alias.sent = "[Gmail]/Sent Mail"
+mailbox.alias.drafts = "[Gmail]/Drafts"
+mailbox.alias.trash = "[Gmail]/Trash"
+```
+
+Himalaya does not automatically load `.env` files. Source one explicitly from the password command:
+
+```toml
+imap.sasl.plain.password.command = ["sh", "-c", ". /path/to/.env; printf '%s' \"$GMAIL_APP_PASSWORD\""]
+smtp.sasl.plain.password.command = ["sh", "-c", ". /path/to/.env; printf '%s' \"$GMAIL_APP_PASSWORD\""]
+```
+
+Keep config and secret files private:
 
 ```bash
-himalaya account list
+chmod 600 ~/.config/himalaya/config.toml ~/.config/himalaya/.env
 ```
 
-Diagnose account connectivity:
+For Gmail REST API, use an OAuth 2.0 bearer token from a broker such as `ortie`:
+
+```toml
+gmail.auth.token.command = ["ortie", "token", "show", "-a", "gmail"]
+```
+
+Select it with `-b gmail` when the account has multiple backends. App passwords work with the IMAP/SMTP configuration, not the Gmail REST backend.
+
+## File Handling
+
+Let the caller choose attachment paths. Do not hardcode a machine-specific source path.
+
+When a temporary `.eml` is needed, use the task's working directory or the workspace `Workbench/` directory. Remove temporary MIME files after successful delivery unless the user asks to retain them.
+
+## Path A: Compose and Send
+
+### Plain Email
 
 ```bash
-himalaya account doctor <name>
+himalaya message compose \
+  --from sender@example.com \
+  --to recipient@example.com \
+  --subject "Subject" \
+  --body "Email body" \
+  --send
 ```
 
-
-
----
-
-## Email Operations
-
-### List Envelopes (Inbox)
+### Email with Attachment
 
 ```bash
-# List first page of INBOX (default folder)
-himalaya envelope list --page 1 --output json
-
-# List a specific folder
-himalaya envelope list --folder "Sent Items" --page 1 --output json
-
-# List with a specific account
-himalaya envelope list --account work --page 1 --output json
-
-# Control page size
-himalaya envelope list --page 1 --page-size 20 --output json
+himalaya message compose \
+  --from sender@example.com \
+  --to recipient@example.com \
+  --subject "Document" \
+  --body "Please see the attached document." \
+  --attach /path/to/document.pdf \
+  --send
 ```
 
-### Search & Filter Envelopes
+Repeat `--attach` for multiple files. Use `--save sent` only when a manual Sent copy is required.
 
-Powerful query syntax combining filters and sorting:
+### Reply and Forward
 
 ```bash
-# Filter by subject — IMPORTANT: only a SINGLE WORD, see caveat below
-himalaya envelope list "subject meeting" --output json
-
-# Filter by sender
-himalaya envelope list "from jane@example.com" --output json
-
-# Filter by date
-himalaya envelope list "after 2026-05-01" --output json
-himalaya envelope list "before 2026-05-15" --output json
-himalaya envelope list "date 2026-05-10" --output json
-
-# Combined filters with operators
-himalaya envelope list "subject foo and body bar" --output json
-himalaya envelope list "from alice or from bob" --output json
-himalaya envelope list "not flag seen" --output json
-
-# Narrow results by combining subject + date
-himalaya envelope list "subject invoice and after 2025-01-01" --output json
-
-# Sorting
-himalaya envelope list "order by date desc" --output json
-himalaya envelope list "order by from asc" --output json
-himalaya envelope list "order by subject" --output json
-
-# Combined filter + sort
-himalaya envelope list "subject report order by date desc" --output json
-
-# Filter by flag
-himalaya envelope list "flag seen" --output json
-himalaya envelope list "flag flagged" --output json
+himalaya message reply -m inbox 42 --body "Reply text" --send
+himalaya message forward -m inbox 42 --to recipient@example.com --send
 ```
 
-#### ⚠️ Search Caveat: Single-Word Patterns Only
+Both support `--attach`, `--body-file`, `--cc`, `--bcc`, `--save`, and `--send`.
 
-The query parser treats **spaces as separators** between filter conditions. Multi-word patterns will fail:
+## Path B: Raw MIME
+
+Use this path for rich MIME, custom headers, signing, encryption, or a message generated by Python's `EmailMessage`.
+
+Send a prepared message:
 
 ```bash
-# ❌ FAILS — spaces are parsed as query separators
-himalaya envelope list "subject quarterly report" --output json
-# Error: found 'r' expected space between filters, `and`, `or`, or end of input
-
-# ✅ WORKAROUND: use a single distinguishing word
-himalaya envelope list "subject quarterly" --output json
-
-# ✅ ALTERNATIVE: combine subject + sender + date to narrow results
-himalaya envelope list "subject invoice and from billing@example.com and after 2025-01-01" --output json
+himalaya message send --account "Account Name" message.eml
 ```
 
-When searching for a phrase, pick the most unique single word from it, and optionally add `from` or date filters to narrow down.
-
-### Read a Message
+Or pipe a MIME message through stdin:
 
 ```bash
-# Read the full message by envelope ID
-himalaya message read 42
-
-# Export raw message to file
-himalaya message export 42
+cat message.eml | himalaya message send --account "Account Name"
 ```
 
-### Compose & Send
+`message send` accepts a file path, inline raw message, or stdin. Do not manually put base64 data into shell arguments.
+
+## Read and Search
+
+### Mailboxes
 
 ```bash
-# Compose a new message (opens $EDITOR)
-himalaya message write
-
-# Reply to a message
-himalaya message reply 42
-
-# Forward a message
-himalaya message forward 42
-
-# Edit an existing message
-himalaya message edit 42
+himalaya mailbox list --json
 ```
 
-### Delete & Move
+Use aliases from `[mailbox.alias]`, such as `inbox`, `sent`, `drafts`, and `trash`.
+
+### Envelopes
 
 ```bash
-# Move message to target folder
-himalaya message move 42 --folder "Archive"
-
-# Copy message to target folder
-himalaya message copy 42 --folder "Projects"
-
-# Mark message as deleted
-himalaya message delete 42
+himalaya envelope list -m inbox --json
+himalaya envelope list -m sent --recipient --has-attachment --json
+himalaya envelope list -m inbox --page 1 --page-size 20 --json
 ```
 
-### Attachment Operations
+`--has-attachment` populates the attachment column; it does not filter messages by itself.
+
+### Search
 
 ```bash
-# Download all attachments from a message
-himalaya attachment download 42
+himalaya envelope search -m inbox "from alice@example.com and after 2026-05-01" --json
+himalaya envelope search -m inbox "subject invoice order by date desc" --json
+himalaya envelope search -m inbox "not flag seen" --json
 ```
 
-#### ⚠️ Critical: Default Download Folder
+Supported conditions include `date`, `after`, `from`, `to`, `subject`, `body`, and `flag`. Combine conditions with `and`, `or`, `not`, and parentheses.
 
-himalaya **ignores `cwd`** and always downloads attachments to the **default download folder configured per account** during `himalaya account configure`. The `cd` command has NO effect on download location — do NOT use it before `himalaya attachment download`.
-
-**Correct approach**: download first, then `mv` files to the desired target folder:
+### Read Messages
 
 ```bash
-# Step 1: Download (files go to account's default download folder)
-himalaya attachment download 42
+# Render headers and text bodies
+himalaya message read -m inbox 42
 
-# Step 2: Move files to target folder
-mv downloaded_file.pdf /path/to/target/folder/
+# Parsed JSON
+himalaya message read -m inbox 42 --json
 
-# Batch download, then move
-for id in 42 43 44; do
-    himalaya attachment download "$id"
-done
-mv *.pdf /path/to/target/folder/
+# Raw RFC 5322 bytes
+himalaya message read -m inbox 42 --raw > message.eml
 ```
 
-To find out the current default download folder, check the account config:
-```bash
-# View account configuration
-himalaya account list --output json
-```
+## Message Management
 
-How to check which messages have attachments:
-
-### Flag Management
+### Copy and Move
 
 ```bash
-# Add flags
-himalaya flag add 42 --flag seen
-himalaya flag add 42 --flag flagged
-
-# Set (replace all) flags
-himalaya flag set 42 --flag seen
-
-# Remove flags
-himalaya flag remove 42 --flag seen
+himalaya message copy -f inbox -t archive 42
+himalaya message move -f inbox -t archive 42
 ```
 
-### Folder/Mailbox Management
+### Flags
 
 ```bash
-# List all folders
-himalaya folder list --output json
-
-# Create a folder
-himalaya folder create "MyFolder"
-
-# Delete a folder
-himalaya folder delete "OldFolder"
-
-# Expunge (remove deleted messages permanently)
-himalaya folder expunge "INBOX"
-
-# Purge (delete all messages)
-himalaya folder purge "Trash"
+himalaya flag add -m inbox --flag seen 42
+himalaya flag add -m inbox --flag flagged 42
+himalaya flag set -m inbox --flag seen 42
+himalaya flag remove -m inbox --flag seen 42
 ```
 
-### Templates (Advanced)
+## Attachments
+
+List attachments before downloading:
 
 ```bash
-# Generate a template for composing
-himalaya template write
-
-# Generate a reply template
-himalaya template reply 42
-
-# Generate a forward template
-himalaya template forward 42
-
-# Save template to folder
-himalaya template save
-
-# Send a template
-himalaya template send
+himalaya attachment list -m inbox 42 --json
 ```
 
----
-
-## AI Agent Patterns
-
-### Typical Workflow
+Download all attachments:
 
 ```bash
-# 1. Check recent emails (first page, most recent first)
-RECENT=$(himalaya envelope list --page 1 --output json)
-
-# 2. Search for specific emails
-RESULTS=$(himalaya envelope list "subject invoice order by date desc" --output json)
-
-# 3. Read a specific message by ID
-himalaya message read 42
-
-# 4. Reply to a message (opens $EDITOR with pre-filled template)
-himalaya message reply 42
+himalaya attachment download -m inbox 42 --dir /desired/target/folder
 ```
 
-### Advanced Keyword Search via Python Pipeline
-
-When built-in search is insufficient (single-word limitation, or need to search across multiple fields), pipe JSON output to Python:
+Download selected attachment ids:
 
 ```bash
-# Search by multiple keywords across subject + from fields
-himalaya envelope list --folder INBOX --page 1 --page-size 500 --output json | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-matches = []
-for e in data:
-    subj = (e.get('subject') or '').lower()
-    # IMPORTANT: 'from' is an OBJECT with 'name' and 'addr' keys, not a string
-    frm_addr = ''
-    frm_name = ''
-    if isinstance(e.get('from'), dict):
-        frm_addr = (e.get('from').get('addr') or '').lower()
-        frm_name = (e.get('from').get('name') or '').lower()
-    if any(kw in subj or kw in frm_addr or kw in frm_name for kw in ['microsoft', 'msbill', 'msft']):
-        matches.append({
-            'id': e.get('id'),
-            'subject': e.get('subject'),
-            'from': e.get('from'),
-            'date': e.get('date'),
-            'has_attachment': e.get('has_attachment')
-        })
-print(json.dumps(matches, indent=2))
-print(f'Total: {len(data)}, Matched: {len(matches)}', file=sys.stderr)
-"
-
-# Paginate through large inboxes (increase --page for older emails)
-himalaya envelope list --folder INBOX --page 2 --page-size 500 --output json | python3 -c "..."
-
-# Also search Archive folder for old emails
-himalaya envelope list --folder Archive --page 1 --page-size 500 --output json | python3 -c "..."
+himalaya attachment download -m inbox 42 1 2 --dir /desired/target/folder
 ```
 
-### Extract Links from Email Body
+Attachment ids are the 1-based ids returned by `attachment list`. If `--dir` is omitted, the account/global `downloads-dir` setting is used.
+
+## JSON Automation
+
+Common v2 envelope fields:
+
+```json
+{
+  "id": "42",
+  "message-id": "<message@example.com>",
+  "subject": "Example",
+  "from": [{"name": "Sender", "email": "sender@example.com"}],
+  "to": [{"name": null, "email": "recipient@example.com"}],
+  "date": "2026-08-17T10:00:00+10:00",
+  "has-attachment": true
+}
+```
+
+`from` and `to` are arrays. Address values use `email`. Attachment status uses `has-attachment`. Message ids are backend-specific, so retain the mailbox used to obtain each id.
+
+```python
+for envelope in data.get("envelopes", data):
+    senders = envelope.get("from", [])
+    addresses = [item.get("email", "") for item in senders]
+    if envelope.get("has-attachment"):
+        print(envelope.get("id"), addresses)
+```
+
+## Output Verification
+
+After sending an attachment, verify it when delivery correctness matters:
 
 ```bash
-# message read returns raw text (not JSON), use grep to extract URLs
-himalaya message read 42 2>&1 | grep -o 'https://admin\.microsoft\.com[^ ]*'
-
-# Or extract all HTTPS links
-himalaya message read 42 2>&1 | grep -oP 'https?://[^\s<>\"'\\'']+' 
+himalaya attachment list -m sent MESSAGE_ID --json
 ```
 
-### Collect Invoice Attachments from Email (End-to-End Workflow)
+For Gmail SMTP, do not add `--save sent` during this verification workflow unless a second Sent copy is intentional.
 
-```bash
-# 1. Search for invoice emails with attachments across multiple pages
-himalaya envelope list --folder INBOX --page 1 --page-size 500 --output json | python3 -c "
-import json, sys
-for e in json.load(sys.stdin):
-    subj = (e.get('subject') or '').lower()
-    if 'invoice' in subj and e.get('has_attachment'):
-        print(json.dumps({'id':e['id'],'date':e['date'],'subject':e['subject']}))
-"
+## Common Issues
 
-# 2. Download attachments (files land in account's default download folder)
-mkdir -p /desired/target/folder
-for id in 42 43 44; do
-    himalaya attachment download "$id"
-done
+| Error or symptom | Solution |
+|---|---|
+| `command not found: himalaya` | Check PATH and `$HOME/.cargo/bin/himalaya`; install a stable release. |
+| `account check` authentication failure | Verify the app password, username, endpoint, and password command output. |
+| Gmail `Folder doesn't exist` | Configure `mailbox.alias.sent = "[Gmail]/Sent Mail"`, or omit `--save` for SMTP. |
+| Duplicate Sent records | Gmail already saves SMTP messages; omit `--save sent`. |
+| Attachment missing | Use `message compose --attach` or verify the MIME message has a valid attachment part. |
+| Need original MIME | Use `message read --raw`. |
+| Need custom multipart MIME | Generate `.eml` and use `message send`. |
+| JSON contains unexpected fields | Run the installed command with `--help` and inspect the current `--json` output. |
 
-# 3. Move downloaded files to target folder
-mv *.pdf /desired/target/folder/
+## Provider Notes
 
-# 4. Inspect downloaded PDFs (e.g., with markitdown)
-cd /desired/target/folder
-for f in *.pdf; do
-    markitdown "$f" | head -10
-done
-
-# 5. Rename files with meaningful names based on content
-```
-
-### JSON Structure Caveats
-
-- **`from` and `to` are objects**: `{"name": "Microsoft", "addr": "noreply@microsoft.com"}`, NOT strings. Always check `isinstance(e.get('from'), dict)` before accessing `.get('addr')`.
-- **`message read` returns raw text**, not a JSON dict. Pipe directly to `grep` or string parsing. Use `--output json` only for `envelope list` and `folder list`.
-
----
-
-## Supported Providers
-
-| Provider | IMAP Host | SMTP Host | Auth |
-|----------|-----------|-----------|------|
-| Gmail | `imap.gmail.com:993` | `smtp.gmail.com:465` | App Password or OAuth 2.0 |
-| Outlook/Office 365 | `outlook.office365.com:993` | `smtp.office365.com:587` (STARTTLS) | Password or OAuth 2.0 |
-| Proton Mail | `127.0.0.1:1143` (via Bridge) | `127.0.0.1:1025` (via Bridge) | Bridge password |
-| iCloud | `imap.mail.me.com:993` | `smtp.mail.me.com:587` (STARTTLS) | App-specific password |
-
-## Version
-
-Current installed: `himalaya v1.2.0` (installed via `cargo install himalaya --locked`)
-Installed at: `~/.cargo/bin/himalaya`
+| Provider | v2 backend | Typical auth |
+|---|---|---|
+| Gmail | IMAP/SMTP or native `gmail` REST | App Password or OAuth 2.0 |
+| Outlook/Microsoft 365 | IMAP/SMTP or `msgraph` | OAuth 2.0 |
+| Fastmail | IMAP/SMTP or JMAP | App Password or API token |
+| Proton Mail | IMAP/SMTP through Proton Bridge | Bridge password |
+| iCloud Mail | IMAP/SMTP | App-specific password |
