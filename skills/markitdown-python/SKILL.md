@@ -121,6 +121,20 @@ markitdown path/to/file.pdf -o output.md
 cat path/to/file.pdf | markitdown
 ```
 
+### Automated Conversion Script
+
+For repeatable file conversions, use `scripts/convert_to_markdown.py`. Run it with the current `python` when that environment can import `markitdown`; use the dedicated virtual-environment interpreter only when the current environment does not have the dependency. The script converts the input, removes NUL characters from generated text, writes UTF-8 without a BOM, validates that the output is not empty, and prints the output path.
+
+```powershell
+python "$env:USERPROFILE\.agents\skills\markitdown-python\scripts\convert_to_markdown.py" ".\input.msg" -o ".\output.md"
+```
+
+```bash
+python ~/.agents/skills/markitdown-python/scripts/convert_to_markdown.py ./input.msg -o ./output.md
+```
+
+The relative input and output paths are resolved from the current working directory. When `-o` is omitted for a local file, the script creates the Markdown file beside the input with the same base name. If `python` cannot import `markitdown`, replace `python` with the interpreter under `~/.venv` shown in the installation section.
+
 ### Python API (for advanced use cases)
 
 ```powershell
@@ -159,6 +173,19 @@ print(result.text_content)
 ```bash
 markitdown "path/to/file.pdf" -d -e "<endpoint>"
 ```
+
+## Output Validation
+
+After conversion, verify that the Markdown output exists and is not empty. If the generated text contains NUL characters, remove them and rewrite the Markdown as UTF-8 without a BOM. Apply this only to the generated text output, never to the source file:
+
+```powershell
+$outputPath = 'path\to\output.md'
+$text = [System.IO.File]::ReadAllText($outputPath).Replace(([string][char]0), '')
+[System.IO.File]::WriteAllText($outputPath, $text, [System.Text.UTF8Encoding]::new($false))
+if ((Get-Item -LiteralPath $outputPath).Length -eq 0) { throw 'Markdown output is empty.' }
+```
+
+If the source filename is unusually long or contains awkward spacing, use a shorter Markdown output filename while keeping it beside the source file.
 
 ## Notes
 
