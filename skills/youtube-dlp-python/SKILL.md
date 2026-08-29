@@ -22,7 +22,7 @@ All Python scripts live in `$SKILL_DIR/scripts/`.
 ## Decision
 
 1. Check subtitles first: `yt-dlp --list-subs "URL"`. If any exist → **Path A (yt-dlp subtitles)**.
-2. If subtitle download fails with `HTTP 429/403` (timedtext API blocked on this IP, common on cloud/VPS/datacenter) or no subtitles exist → **Path B (Whisper fallback)**. Do NOT retry — retrying is futile; audio downloads use a different CDN and are unaffected.
+2. If no subtitles exist, or Path A cannot download a usable subtitle after trying its track-selection order → **Path B (Whisper fallback)**. Do NOT retry the same failed track; audio downloads use a different CDN and are normally unaffected.
 
 ## Environment Check
 
@@ -46,10 +46,19 @@ Filename is always `Youtube-<Channel>-<Snake_Case_Title>.md`, and **the first li
 
 ## Path A: yt-dlp Subtitles (Preferred)
 
+Within Path A, select the language in this order:
+
+1. Determine the video's source language from its title (unless the user explicitly requests a different language; for example, English/Latin → `en`, Simplified Chinese → `zh-Hans`, Traditional Chinese → `zh-Hant`).
+2. If `Available subtitles` contains a manual track in that language, use it.
+3. Otherwise, use the matching original-language automatic track whose exact code ends in `-orig` (for example, `en-orig`).
+4. If no matching `-orig` track exists, use the non-`-orig` automatic track for the video's source language (for example, `en`, `zh-Hans`, or `zh-Hant`).
+
+Use `--write-sub` for manual subtitles and `--write-auto-sub` for automatic captions. If a track returns 429/403, do not retry that track; continue with the next candidate in this order, then use Path B if all candidates fail.
+
 ```bash
 VIDEO_URL="YOUTUBE_URL"
 
-# 1. Check subtitles -- read full output, don't grep (a lang under auto captions won't work with --write-sub)
+# 1. Check subtitles -- read full output, don't grep. Keep the two sections separate.
 yt-dlp --list-subs "$VIDEO_URL"
 
 # 2. Get title/channel and derive snake_case filename
@@ -60,13 +69,15 @@ CHANNEL_SNAKE=$(snake_case "$CHANNEL")
 SNAKE_TITLE=$(snake_case "$TITLE")
 OUTPUT_MD="Youtube-${CHANNEL_SNAKE:+$CHANNEL_SNAKE-}$SNAKE_TITLE.md"
 
-# 3. Download subtitles -- manual first (--write-sub), fall back to auto (--write-auto-sub).
-#    Copy the EXACT lang code from the --list-subs output. Manual subtitles are
-#    listed under "Available subtitles", auto captions under "Available automatic
-#    captions" -- and their codes DIFFER (e.g. zh-Hans manual vs zh-Hans-zh-Hans auto).
-#    Use the flag that matches the section you picked.
-yt-dlp --write-sub --sub-langs <lang> --skip-download --output "$TITLE" "$VIDEO_URL"
-#    → on HTTP 429/403 do NOT retry; try the auto path (correct auto lang code), else Path B.
+# 3. Determine the video's source language from TITLE, then select one track in this
+#    order: manual source-language subtitle, source-language automatic -orig track,
+#    and finally the regular source-language automatic track.
+#    Copy the exact language code from --list-subs; manual and automatic codes can
+#    differ (for example, zh-Hans vs zh-Hans-zh-Hans). Run only one command below.
+#    Manual subtitle:
+yt-dlp --write-sub --sub-langs <manual-lang> --skip-download --output "$TITLE" "$VIDEO_URL"
+#    Automatic subtitle (-orig or regular source language):
+yt-dlp --write-auto-sub --sub-langs <orig-or-title-lang> --skip-download --output "$TITLE" "$VIDEO_URL"
 
 # 4. Verify the .vtt was actually written before converting. If missing, the
 #    flag/lang-code combo was wrong (see step 3) or the subtitle API is blocked.
@@ -109,7 +120,7 @@ No files written. Gotchas are documented in the script's docstring.
 |-------|----------|
 | `command not found: yt-dlp` | `source ~/.zshrc`, then check `~/.venv/bin` |
 | `No subtitles for requested languages` | flag/lang-code mismatch: manual subs (`--write-sub`) are under "Available subtitles", auto (`--write-auto-sub`) under "Available automatic captions" with different codes (`zh-Hans` vs `zh-Hans-zh-Hans`). Copy the exact code from `--list-subs`. |
-| `HTTP Error 429/403` on subtitle | Do NOT retry → Path B (Whisper fallback) |
+| `HTTP Error 429/403` on subtitle | Do NOT retry the same track; try the next distinct candidate in the manual → `-orig` → title-language order, then use Path B. |
 | Exit code is 0 even on failure | yt-dlp returns 0 for both "no subtitles" and 429. Do NOT trust exit codes — verify the `.vtt` file exists (step 4) and read the error text. |
 | `ModuleNotFoundError: faster_whisper` / `av` | `~/.venv/bin/pip install faster-whisper` (installs `av`) |
 | `Cannot write video metadata to JSON file` | Restricted dir → `--dump-single-json` to stdout |
